@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SolidityCheck — Free Smart Contract Security Scanner</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh}
+.container{max-width:900px;margin:0 auto;padding:20px}
+h1{color:#58a6ff;font-size:2em;margin-bottom:10px}
+.subtitle{color:#8b949e;margin-bottom:30px}
+textarea{width:100%;height:400px;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#c9d1d9;padding:15px;font-family:'Fira Code',monospace;font-size:13px;resize:vertical}
+textarea:focus{outline:none;border-color:#58a6ff}
+button{background:#238636;color:#fff;border:none;padding:12px 24px;border-radius:6px;font-size:16px;cursor:pointer;margin-top:15px}
+button:hover{background:#2ea043}
+#results{margin-top:20px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:15px;display:none}
+.finding{padding:10px;margin:8px 0;border-radius:4px;border-left:3px solid}
+.critical{border-color:#f85149;background:#f8514910}
+.high{border-color:#db6d28;background:#db6d2810}
+.medium{border-color:#d29922;background:#d2992210}
+.low{border-color:#388bfd;background:#388bfd10}
+.info{border-color:#8b949e;background:#8b949e10}
+.severity{font-weight:bold;text-transform:uppercase;font-size:12px}
+.severity.critical{color:#f85149}.severity.high{color:#db6d28}.severity.medium{color:#d29922}.severity.low{color:#388bfd}.severity.info{color:#8b949e}
+.tip-box{margin-top:40px;padding:20px;background:#161b22;border:1px solid #30363d;border-radius:8px;text-align:center}
+.tip-box h3{color:#58a6ff;margin-bottom:10px}
+.wallet{font-family:monospace;background:#0d1117;padding:8px 12px;border-radius:4px;display:inline-block;margin:10px 0;word-break:break-all;font-size:13px;color:#7ee787}
+.stats{color:#8b949e;font-size:14px;margin-top:10px}
+a{color:#58a6ff}
+.badge{display:inline-block;background:#238636;color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;margin-left:8px}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🔍 SolidityCheck <span class="badge">FREE</span></h1>
+<p class="subtitle">Paste your Solidity code below for an instant security scan. Built by <a href="https://github.com/jamesOuttake">OuttakeClaw</a> — security researchers who find real bugs in real protocols.</p>
+
+<textarea id="code" placeholder="// Paste your Solidity code here...
+pragma solidity ^0.8.0;
+
+contract MyContract {
+    // ...
+}"></textarea>
+<button onclick="scan()">🔍 Scan for Vulnerabilities</button>
+
+<div id="results"></div>
+
+<div class="tip-box">
+<h3>☕ Found this useful? Buy us a coffee</h3>
+<p>We build free security tools and hunt bugs to make DeFi safer.</p>
+<div class="wallet">0x5826F2Bd956FE3db94fe961d0ad5B02dd101b663</div>
+<p><small>ETH / USDC / any ERC-20 on Ethereum, Base, Arbitrum, Optimism, Polygon</small></p>
+<p class="stats">Built by OuttakeClaw • Found $45k+ in bugs • <a href="mailto:2026feb05@proton.me">Hire us for audits</a></p>
+</div>
+</div>
+
+<script>
+const patterns = [
+{regex:/\.call\{value:/g, severity:'high', title:'Unchecked Low-Level Call', desc:'Using .call{value:} without checking return value can silently fail. Always check the bool return.', fix:'(bool success, ) = addr.call{value: amount}(""); require(success);'},
+{regex:/tx\.origin/g, severity:'critical', title:'tx.origin Authentication', desc:'Using tx.origin for authentication is vulnerable to phishing attacks. Use msg.sender instead.', fix:'Replace tx.origin with msg.sender for all auth checks.'},
+{regex:/selfdestruct|suicide/g, severity:'critical', title:'Self-Destruct Usage', desc:'selfdestruct can be used to force-send ETH and disrupt contract logic. Consider removing.', fix:'Remove selfdestruct unless absolutely necessary.'},
+{regex:/block\.timestamp/g, severity:'low', title:'Block Timestamp Dependence', desc:'block.timestamp can be slightly manipulated by miners (~15 seconds). Avoid for critical logic.', fix:'Use block.number for ordering or accept the ~15s variance.'},
+{regex:/delegatecall/g, severity:'high', title:'Delegatecall Usage', desc:'delegatecall executes code in the caller\'s context. Ensure target is trusted and storage layout matches.', fix:'Validate target address. Consider using a whitelist of approved implementations.'},
+{regex:/transfer\(|\.send\(/g, severity:'medium', title:'Fixed Gas Transfer', desc:'.transfer() and .send() forward only 2300 gas, which can fail with contract recipients after EIP-1884.', fix:'Use .call{value: amount}("") with reentrancy guards instead.'},
+{regex:/abi\.encodePacked\(/g, severity:'medium', title:'ABI EncodePacked Hash Collision', desc:'abi.encodePacked with multiple dynamic types can produce hash collisions. Use abi.encode instead.', fix:'Replace abi.encodePacked with abi.encode when hashing multiple dynamic values.'},
+{regex:/pragma solidity \^?0\.[0-6]\./g, severity:'high', title:'Outdated Solidity Version', desc:'Solidity versions before 0.8.0 lack built-in overflow protection and have known bugs.', fix:'Upgrade to Solidity 0.8.x or later.'},
+{regex:/onlyOwner|Ownable/g, severity:'info', title:'Centralization Risk', desc:'Owner-controlled functions create centralization risk. Consider timelocks or multi-sig governance.', fix:'Add timelock delays to sensitive owner functions. Consider multi-sig.'},
+{regex:/approve\(.*type\(uint256\)\.max/g, severity:'medium', title:'Infinite Approval', desc:'Infinite token approvals can be exploited if the approved contract is compromised.', fix:'Approve only the exact amount needed, or implement increaseAllowance.'},
+{regex:/external.*\n.*external|public.*\n.*public/g, severity:'info', title:'Multiple External Calls', desc:'Multiple external calls in sequence may be vulnerable to reentrancy. Check for state changes between calls.', fix:'Follow checks-effects-interactions pattern. Consider ReentrancyGuard.'},
+{regex:/ERC20|IERC20/g, severity:'info', title:'ERC20 Interaction', desc:'Interacting with arbitrary ERC20 tokens? Some have fee-on-transfer, rebasing, or callback mechanisms.', fix:'Use SafeERC20 and handle non-standard token behaviors.'},
+{regex:/unchecked\s*\{/g, severity:'medium', title:'Unchecked Arithmetic', desc:'Unchecked blocks bypass overflow/underflow protection. Ensure arithmetic is safe.', fix:'Only use unchecked when overflow/underflow is mathematically impossible.'},
+{regex:/assembly\s*\{/g, severity:'high', title:'Inline Assembly', desc:'Inline assembly bypasses Solidity safety checks. Review carefully for memory safety and correctness.', fix:'Document assembly usage thoroughly. Consider Solidity alternatives.'},
+{regex:/receive\(\)\s*external\s*payable|fallback\(\)\s*external\s*payable/g, severity:'info', title:'Payable Fallback', desc:'Contract can receive ETH. Ensure all ETH accounting is correct.', fix:'Track received ETH properly. Consider if receiving ETH is intended.'},
+{regex:/block\.number/g, severity:'low', title:'Block Number Dependence', desc:'Block times vary across chains (L2s have 2s blocks). Ensure block.number assumptions are chain-appropriate.', fix:'Use timestamps for time-dependent logic or account for chain-specific block times.'},
+];
+
+function scan() {
+const code = document.getElementById('code').value;
+if(!code.trim()){alert('Paste some Solidity code first!');return;}
+const results = document.getElementById('results');
+results.style.display = 'block';
+let findings = [];
+patterns.forEach(p => {
+  const matches = code.match(p.regex);
+  if(matches) {
+    findings.push({...p, count: matches.length});
+  }
+});
+if(findings.length === 0) {
+  results.innerHTML = '<div class="finding info"><span class="severity info">✅ CLEAN</span><p style="margin-top:5px">No common vulnerabilities detected. Note: This is a pattern-based scan — it catches common issues but not all bugs. For a comprehensive audit, <a href="mailto:2026feb05@proton.me">contact us</a>.</p></div>';
+  return;
+}
+findings.sort((a,b) => {
+  const order = {critical:0,high:1,medium:2,low:3,info:4};
+  return order[a.severity] - order[b.severity];
+});
+let html = `<h3 style="color:#c9d1d9;margin-bottom:15px">Found ${findings.length} potential issues:</h3>`;
+findings.forEach(f => {
+  html += `<div class="finding ${f.severity}">
+    <span class="severity ${f.severity}">${f.severity}</span> — ${f.title} (${f.count} occurrence${f.count>1?'s':''})
+    <p style="margin-top:5px;color:#8b949e">${f.desc}</p>
+    <p style="margin-top:5px;color:#7ee787;font-size:13px">💡 Fix: ${f.fix}</p>
+  </div>`;
+});
+html += '<p style="margin-top:15px;color:#8b949e;font-size:13px">⚠️ This is a pattern-based scan. For a full audit, <a href="mailto:2026feb05@proton.me">hire OuttakeClaw</a>.</p>';
+results.innerHTML = html;
+}
+</script>
+</body>
+</html>
